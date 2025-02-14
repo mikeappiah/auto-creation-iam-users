@@ -1,76 +1,82 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Template for IAM users with S3 and EC2 access'
+Description: Lab Template for IAM Users, Groups, and EventBridge Rule
 
 Parameters:
   EC2UserEmail:
     Type: String
-    Description: Email address for EC2 user
-    Default: ec2-user@example.com
-
+    Description: Email address for ec2-user
   S3UserEmail:
     Type: String
-    Description: Email address for S3 user
-    Default: s3-user@example.com
+    Description: Email address for s3-user
 
 Resources:
-  # Generate random password
-  TemporaryPassword:
+  # Generate a one-time password and store it in Secrets Manager
+  OneTimePasswordSecret:
     Type: AWS::SecretsManager::Secret
     Properties:
-      Name: UserTemporaryPassword
+      Name: OneTimePassword
+      Description: Temporary password for IAM users
       GenerateSecretString:
-        SecretStringTemplate: '{"password": ""}'
-        GenerateStringKey: password
-        PasswordLength: 12
+        PasswordLength: 16
         ExcludeCharacters: '"@/\'
 
-  # S3 Group and Policy
+  # Create S3 User Group with read access to S3
   S3UserGroup:
     Type: AWS::IAM::Group
     Properties:
-      GroupName: S3ReadOnlyGroup
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+      GroupName: S3UserGroup
+      Policies:
+        - PolicyName: S3ReadAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:Get*
+                  - s3:List*
+                Resource: '*'
 
-  # EC2 Group and Policy
+  # Create EC2 User Group with read access to EC2
   EC2UserGroup:
     Type: AWS::IAM::Group
     Properties:
-      GroupName: EC2ReadOnlyGroup
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AmazonEC2ReadOnlyAccess
+      GroupName: EC2UserGroup
+      Policies:
+        - PolicyName: EC2ReadAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:Describe*
+                Resource: '*'
 
-  # IAM Users
+  # Create IAM Users
   EC2User:
     Type: AWS::IAM::User
-    DependsOn:
-      - EC2UserGroup
-      - TemporaryPassword
+    DependsOn: UserCreationEventRule # Ensure EventBridge rule is created first
     Properties:
       UserName: ec2-user
       Groups:
         - !Ref EC2UserGroup
       LoginProfile:
-        Password: !Sub '{{resolve:secretsmanager:${TemporaryPassword}:SecretString:password}}'
+        Password: !Sub '{{resolve:secretsmanager:OneTimePassword}}'
         PasswordResetRequired: true
 
   S3User:
     Type: AWS::IAM::User
-    DependsOn:
-      - S3UserGroup
-      - TemporaryPassword
+    DependsOn: UserCreationEventRule # Ensure EventBridge rule is created first
     Properties:
       UserName: s3-user
       Groups:
         - !Ref S3UserGroup
       LoginProfile:
-        Password: !Sub '{{resolve:secretsmanager:${TemporaryPassword}:SecretString:password}}'
+        Password: !Sub '{{resolve:secretsmanager:OneTimePassword}}'
         PasswordResetRequired: true
 
   # Store user emails in Parameter Store
   EC2UserEmailParameter:
     Type: AWS::SSM::Parameter
-    DependsOn: EC2User
     Properties:
       Name: /iam/users/ec2-user/email
       Type: String
@@ -78,13 +84,88 @@ Resources:
 
   S3UserEmailParameter:
     Type: AWS::SSM::Parameter
-    DependsOn: S3User
     Properties:
       Name: /iam/users/s3-user/email
       Type: String
       Value: !Ref S3UserEmail
 
-  # Lambda Function Role
+  # EventBridge Rule to detect new user creation - UPDATED EVENT PATTERN
+  UserCreationEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventPattern:
+        source:
+          - aws.iam
+        detail-type:
+          - AWS API Call via CloudTrail
+        detail:
+          eventSource:
+            - iam.amazonaws.com
+          eventName:
+            - CreateUser
+            - CreateLoginProfile
+      Targets:
+        - Id: LogUserDetailsLambda
+          Arn: !GetAtt LogUserDetailsLambda.Arn
+
+  # NEW: Permission for EventBridge to invoke Lambda
+  UserCreationLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LogUserDetailsLambda
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt UserCreationEventRule.Arn
+
+  # Lambda Function to log user details - UPDATED CODE
+  LogUserDetailsLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def handler(event, context):
+              try:
+                  ssm = boto3.client('ssm')
+                  
+                  # Extract user details safely
+                  detail = event.get('detail', {})
+                  request_parameters = detail.get('requestParameters', {})
+                  user_name = request_parameters.get('userName', 'unknown')
+                  
+                  logger.info(f"User creation detected: {user_name}")
+                  
+                  # Try to get the email if the parameter exists
+                  try:
+                      email_param = ssm.get_parameter(Name=f'/iam/users/{user_name}/email')
+                      email = email_param['Parameter']['Value']
+                      logger.info(f"Found email for user {user_name}: {email}")
+                  except ssm.exceptions.ParameterNotFound:
+                      logger.warning(f"No email parameter found for user: {user_name}")
+                      email = "Not found in SSM"
+                  
+                  return {
+                      'statusCode': 200,
+                      'body': json.dumps(f"Processed user creation event for: {user_name}")
+                  }
+              except Exception as e:
+                  logger.error(f"Error processing event: {str(e)}")
+                  logger.error(f"Event: {json.dumps(event)}")
+                  raise
+
+      Runtime: python3.9
+      Timeout: 10
+
+  # IAM Role for Lambda Execution - UPDATED WITH MORE SPECIFIC PERMISSIONS
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -98,104 +179,28 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
       Policies:
-        - PolicyName: UserCreationNotificationPolicy
+        - PolicyName: LambdaPermissions
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
                 Action:
                   - ssm:GetParameter
-                  - secretsmanager:GetSecretValue
-                Resource:
-                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/iam/users/*'
-                  - !Ref TemporaryPassword
-
-  # Lambda Function
-  UserCreationNotificationFunction:
-    Type: AWS::Lambda::Function
-    DependsOn:
-      - LambdaExecutionRole
-      - EC2UserEmailParameter
-      - S3UserEmailParameter
-      - TemporaryPassword
-    Properties:
-      Handler: index.lambda_handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Code:
-        ZipFile: |
-          import json
-          import boto3
-          import logging
-
-          logger = logging.getLogger()
-          logger.setLevel(logging.INFO)
-
-          def lambda_handler(event, context):
-              logger.info("Lambda triggered. Event received: %s", json.dumps(event))
-
-              try:
-                  user_name = event['detail']['requestParameters']['userName']
-              except KeyError:
-                  logger.error("Unable to extract userName from event: %s", json.dumps(event))
-                  return {
-                      'statusCode': 400,
-                      'body': 'Invalid event structure'
-                  }
-
-              iam = boto3.client('iam')
-              ssm = boto3.client('ssm')
-              secrets = boto3.client('secretsmanager')
-
-              email = ssm.get_parameter(Name=f'/iam/users/{user_name}/email')['Parameter']['Value']
-              password = json.loads(secrets.get_secret_value(SecretId='UserTemporaryPassword')['SecretString'])['password']
-
-              logger.info("New user created:")
-              logger.info(f"Username: {user_name}")
-              logger.info(f"Email: {email}")
-              logger.info(f"Temporary Password: {password}")
-
-              return {
-                  'statusCode': 200,
-                  'body': 'Successfully logged user details'
-              }
-      Runtime: python3.9
-      Timeout: 30
-
-  # EventBridge Rule
-  UserCreationRule:
-    Type: AWS::Events::Rule
-    DependsOn: UserCreationNotificationFunction
-    Properties:
-      Description: 'Rule to detect IAM user creation'
-      EventPattern:
-        source:
-          - aws.iam
-        detail-type:
-          - AWS API Call via CloudTrail
-        detail:
-          eventSource:
-            - iam.amazonaws.com
-          eventName:
-            - CreateUser
-
-      State: ENABLED
-      Targets:
-        - Arn: !GetAtt UserCreationNotificationFunction.Arn
-          Id: UserCreationNotificationTarget
-
-  # Lambda Permission for EventBridge
-  LambdaPermission:
-    Type: AWS::Lambda::Permission
-    DependsOn:
-      - UserCreationRule
-      - UserCreationNotificationFunction
-    Properties:
-      Action: lambda:InvokeFunction
-      FunctionName: !Ref UserCreationNotificationFunction
-      Principal: events.amazonaws.com
-      SourceArn: !GetAtt UserCreationRule.Arn
+                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/iam/users/*'
 
 Outputs:
-  TemporaryPasswordSecret:
-    Description: Secret containing the temporary password
-    Value: !Ref TemporaryPassword
+  OneTimePasswordSecretArn:
+    Description: ARN of the One-Time Password Secret
+    Value: !Ref OneTimePasswordSecret
+  EC2UserEmailParameterName:
+    Description: Name of the EC2 User Email Parameter
+    Value: !Ref EC2UserEmailParameter
+  S3UserEmailParameterName:
+    Description: Name of the S3 User Email Parameter
+    Value: !Ref S3UserEmailParameter
+  LambdaFunctionName:
+    Description: Name of the User Details Logging Lambda Function
+    Value: !Ref LogUserDetailsLambda
+  EventBridgeRuleName:
+    Description: Name of the EventBridge Rule for User Creation
+    Value: !Ref UserCreationEventRule
