@@ -5,10 +5,12 @@ Parameters:
   EC2UserEmail:
     Type: String
     Description: Email address for EC2 user
+    Default: ec2-user@example.com
 
   S3UserEmail:
     Type: String
     Description: Email address for S3 user
+    Default: s3-user@example.com
 
 Resources:
   # Generate random password
