@@ -26,8 +26,8 @@ Create a CloudFormation template that generate the ff resources:
 
 ## CloudWatch Logs
 
-<img width="959" alt="Image" src="https://github.com/user-attachments/assets/d19b6bd9-d685-402b-9f28-9fea9c211b7e" />
+<img width="959" alt="Image" src="https://github.com/user-attachments/assets/f40be8f5-7787-4116-8868-93a9bb803a29" />
 
-<img width="959" alt="Image" src="https://github.com/user-attachments/assets/7123c012-bb45-4cf9-a145-837e18261b09" />
+<img width="959" alt="Image" src="https://github.com/user-attachments/assets/ef0aaa25-f870-4bc8-ab4e-106eee5fa12a" />
 
-<img width="959" alt="Image" src="https://github.com/user-attachments/assets/3f3982a2-3bd5-4a8c-bfe7-ef45cc1348c6" />
+<img width="959" alt="Image" src="https://github.com/user-attachments/assets/2cb3ed33-d033-4170-81a8-4068576d862a" />

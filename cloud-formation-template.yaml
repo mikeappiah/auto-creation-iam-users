@@ -136,6 +136,7 @@ Resources:
           def handler(event, context):
               try:
                   ssm = boto3.client('ssm')
+                  secrets = boto3.client('secretsmanager')
                   
                   # Extract user details safely
                   detail = event.get('detail', {})
@@ -152,6 +153,15 @@ Resources:
                   except ssm.exceptions.ParameterNotFound:
                       logger.warning(f"No email parameter found for user: {user_name}")
                       email = "Not found in SSM"
+                  
+                  # Get the one-time password
+                  try:
+                      password_response = secrets.get_secret_value(SecretId='OneTimePassword')
+                      password = password_response['SecretString']
+                      logger.info(f"Initial password for user {user_name}: {password}")
+                  except Exception as e:
+                      logger.error(f"Error retrieving password: {str(e)}")
+                      password = "Password retrieval failed"
                   
                   return {
                       'statusCode': 200,
@@ -186,7 +196,10 @@ Resources:
               - Effect: Allow
                 Action:
                   - ssm:GetParameter
-                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/iam/users/*'
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/iam/users/*'
+                  - !Ref OneTimePasswordSecret
 
 Outputs:
   OneTimePasswordSecretArn:
