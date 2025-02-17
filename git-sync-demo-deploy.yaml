@@ -1,0 +1,5 @@
+template-file-path: cloud-formation-template.yaml
+parameters:
+  EC2UserEmail: ec2-user@example.com
+  S3UserEmail: s3-user@example.com
+tags: {}
