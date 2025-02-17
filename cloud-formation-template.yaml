@@ -54,7 +54,7 @@ Resources:
   # Create IAM Users
   EC2User:
     Type: AWS::IAM::User
-    DependsOn: UserCreationEventRule # Ensure EventBridge rule is created first
+    DependsOn: UserCreationEventRule
     Properties:
       UserName: ec2-user
       Groups:
@@ -65,7 +65,7 @@ Resources:
 
   S3User:
     Type: AWS::IAM::User
-    DependsOn: UserCreationEventRule # Ensure EventBridge rule is created first
+    DependsOn: UserCreationEventRule
     Properties:
       UserName: s3-user
       Groups:
@@ -89,7 +89,7 @@ Resources:
       Type: String
       Value: !Ref S3UserEmail
 
-  # EventBridge Rule to detect new user creation - UPDATED EVENT PATTERN
+  # EventBridge Rule to detect new user creation
   UserCreationEventRule:
     Type: AWS::Events::Rule
     Properties:
@@ -108,7 +108,7 @@ Resources:
         - Id: LogUserDetailsLambda
           Arn: !GetAtt LogUserDetailsLambda.Arn
 
-  # NEW: Permission for EventBridge to invoke Lambda
+  # Permission for EventBridge to invoke Lambda
   UserCreationLambdaPermission:
     Type: AWS::Lambda::Permission
     Properties:
@@ -117,7 +117,7 @@ Resources:
       Principal: events.amazonaws.com
       SourceArn: !GetAtt UserCreationEventRule.Arn
 
-  # Lambda Function to log user details - UPDATED CODE
+  # Lambda Function to log user details
   LogUserDetailsLambda:
     Type: AWS::Lambda::Function
     Properties:
@@ -165,7 +165,7 @@ Resources:
       Runtime: python3.9
       Timeout: 10
 
-  # IAM Role for Lambda Execution - UPDATED WITH MORE SPECIFIC PERMISSIONS
+  # IAM Role for Lambda
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
